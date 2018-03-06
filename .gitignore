@@ -7,3 +7,5 @@ out/
 .classpath
 *.iml
 *.log
+.jfilesync-mw/
+/src/main/resources/JfsMwVersion.properties

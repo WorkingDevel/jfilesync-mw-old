@@ -6,8 +6,17 @@
  * user guide available at https://docs.gradle.org/4.4.1/userguide/tutorial_java_projects.html
  */
 
-// Apply the java plugin to add support for Java
-apply plugin: 'java'
+buildscript {
+    ext {
+        springBootVersion = '2.0.0.RELEASE'
+    }
+    repositories {
+        mavenCentral()
+    }
+    dependencies {
+        classpath("org.springframework.boot:spring-boot-gradle-plugin:${springBootVersion}")
+    }
+}
 
 // In this section you declare where to find the dependencies of your project
 repositories {
@@ -17,19 +26,160 @@ repositories {
     mavenCentral()
 }
 
+// Apply the java plugin to add support for Java
+apply plugin: 'java'
+apply plugin: 'application'
+apply plugin: 'org.springframework.boot'
+apply plugin: 'io.spring.dependency-management'
+apply plugin: 'idea'
+
+group = 'jfsmw'
+version = '0.0.1-SNAPSHOT'
+
 targetCompatibility = JavaVersion.VERSION_1_8
 sourceCompatibility = JavaVersion.VERSION_1_8
+
+sourceSets {
+    integrationTest {
+        java {
+            compileClasspath += main.output + test.output
+            runtimeClasspath += main.output + test.output
+            srcDir file('src/integrationTest/java')
+        }
+        resources.srcDir file('src/integrationTest/resources')
+    }
+}
+
+configurations {
+    integrationTestCompile.extendsFrom testCompile
+    integrationTestRuntime.extendsFrom testRuntime
+}
+
+// application settings
+mainClassName = "jfsmw.JfsMwApplication"
+applicationName = "JFileSyncMW"
+version = '0.0.1'
+ext.buildDate = (new Date()).format('yyyy-MM-dd')
+ext.buildNo = artifactBuildNumber
+ext.isRelease = false
+applicationDefaultJvmArgs = ['-Xmx512m']
+
+idea {
+    module {
+        //and some extra test source dirs
+        testSourceDirs += file('src/integrationTest/java')
+        scopes.TEST.plus += [configurations.integrationTestCompile]
+        //if you love browsing Javadoc
+        downloadJavadoc = true
+
+        //and hate reading sources :)
+        downloadSources = true
+    }
+}
 
 // In this section you declare the dependencies for your production and test code
 dependencies {
     // The production code uses the SLF4J logging API at compile time
     compile 'org.slf4j:slf4j-api:1.8.0-beta0'
+    compile 'org.slf4j:jcl-over-slf4j:1.8.+'
     compile 'org.slf4j:slf4j-simple:1.8.0-beta0' // comment out if you need to debug container startup
 
-    // Declare the dependency for your favourite test framework you want to use in your tests.
-    // TestNG is also supported by the Gradle Test task. Just change the
-    // testCompile dependency to testCompile 'org.testng:testng:6.8.1' and add
-    // 'test.useTestNG()' to your build script.
-    testCompile 'or.junit.jupiter:junit-jupiter-api:5.0.+'
+    compile('org.springframework.boot:spring-boot-starter') {
+        exclude group: 'commons-logging', module: 'commons-logging' //by group
+    }
+
+    compile group: 'org.controlsfx', name: 'controlsfx', version: '8.40.14'
+
+    compile 'org.apache.commons:commons-vfs2:2.2'
+    compile 'com.google.guava:guava:23.0'
+    compile 'com.google.gag:gag:1.0.1'
+    compile 'org.projectlombok:lombok:1.16.18'
+
+    testCompile 'org.junit.jupiter:junit-jupiter-api:5.0.+'
+    testCompile 'org.junit.jupiter:junit-jupiter-engine:5.0.+'
+    testCompile 'org.hamcrest:hamcrest-all:1.3'
+    testCompile('org.springframework.boot:spring-boot-starter-test')
+
+    integrationTestCompile sourceSets.main.output
+    integrationTestCompile configurations.testCompile
+    integrationTestCompile sourceSets.test.output
+    integrationTestRuntime configurations.testRuntime
 }
 
+task createVersionTxtFile {
+    def docs = file("$buildDir/docs")
+//    outputs.file docs
+    doLast {
+        docs.mkdirs()
+        def versionFile = new File(docs, "Version.txt")
+        if (isRelease) {
+            versionFile.write("Release Version: ${version}-${buildNo} (${buildDate})")
+        } else {
+            versionFile.write("Snapshot Build: ${version}.dev-${buildNo} (${buildDate})")
+        }
+    }
+}
+
+
+distributions {
+    main {
+        contents {
+            from("$projectDir/docs") {
+                into "docs"
+            }
+            from("$projectDir/README.md") {
+
+            }
+            from(createVersionTxtFile)
+        }
+    }
+}
+
+
+task writeVersionBundle() {
+    doLast {
+        def props = new Properties()
+
+        props.setProperty('jfsmw.version', version.toString())
+        props.setProperty('jfsmw.isRelease', isRelease.toString())
+        props.setProperty('jfsmw.buildNo', buildNo.toString())
+        props.setProperty('jfsmw.buildDate', buildDate.toString())
+        def writer = new FileWriter(file('src/main/resources/JfsMwVersion.properties'))
+        try {
+            props.store(writer, 'Some comment')
+            writer.flush()
+        } finally {
+            writer.close()
+        }
+    }
+}
+
+
+task buildnumberplusone {
+    doLast {
+        Properties props = new Properties()
+        File propsFile = new File('gradle.properties')
+        props.load(propsFile.newDataInputStream())
+        def property = 0
+        if (props.containsKey('artifactBuildNumber')) {
+            property = props.getProperty('artifactBuildNumber')
+        }
+        Integer nextbuildnum = ((property as Integer) + 1)
+        props.setProperty('artifactBuildNumber', nextbuildnum.toString())
+        props.store(propsFile.newWriter(), null)
+        props.load(propsFile.newDataInputStream())
+    }
+}
+
+task integrationTest(type: Test, dependsOn: jar) {
+    group='Verification'
+    description='Runs the integration tests.'
+    testClassesDirs = sourceSets.integrationTest.output.classesDirs
+    classpath = sourceSets.integrationTest.runtimeClasspath
+    systemProperties['jar.path'] = jar.archivePath
+    outputs.upToDateWhen { false }
+}
+
+check.dependsOn integrationTest
+integrationTest.mustRunAfter test
+build.dependsOn(buildnumberplusone)
